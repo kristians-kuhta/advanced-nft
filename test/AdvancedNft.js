@@ -52,15 +52,29 @@ describe("Advanced NFT", function () {
     return salt;
   }
 
-  async function prepareForMinting(token, minter, tokenId, options={}) {
-    await (await token.activatePresale()).wait();
+  async function prepareForPresaleMinting(token, minter, tokenId, options={}) {
+    await expect(
+      token.activatePresale()
+    ).to.emit(token, "StageTransition").withArgs(0, 1);
+
+    return await commitTokenIdAndMineBlocks(token, minter, tokenId, options);
+  }
+
+  async function prepareForPublicMinting(token, minter, tokenId, options={}) {
+    await expect(
+      token.activatePresale()
+    ).to.emit(token, "StageTransition").withArgs(0, 1);
+
+    await expect(
+      token.activatePublicSale()
+    ).to.emit(token, "StageTransition").withArgs(1, 2);
 
     return await commitTokenIdAndMineBlocks(token, minter, tokenId, options);
   }
 
   async function deployToken() {
     const [
-      firstAccount,
+      owner,
       secondAccount,
       thirdAccount,
       fourthAccount,
@@ -85,15 +99,14 @@ describe("Advanced NFT", function () {
     const token = await TokenFactory.deploy(
       merkleTree.getRoot(),
       6,
-      developer1.address,
-      developer2.address,
       TICKETS_COUNT
     );
 
     return {
       token,
-      firstAccount,
+      owner,
       secondAccount,
+      thirdAccount,
       fourthAccount,
       fifthAccount,
       developer1,
@@ -152,6 +165,7 @@ describe("Advanced NFT", function () {
       const { token } = await loadFixture(deployToken);
 
       await expect(token.activatePresale()).to.emit(token, "StageTransition").withArgs(0, 1);
+
       expect(await token.stage()).to.equal(1);
     });
 
@@ -192,7 +206,7 @@ describe("Advanced NFT", function () {
       const { token, secondAccount } = await loadFixture(deployToken);
 
       const tokenId = 123;
-      const salt = await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      const salt = await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
 
       const proofs = [
         utils.hexZeroPad(1, 32),
@@ -211,7 +225,7 @@ describe("Advanced NFT", function () {
       const { token, secondAccount } = await loadFixture(deployToken);
 
       const tokenId = 123;
-      const salt = await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      const salt = await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
 
       await expect(
         token.presaleMint(1, [], tokenId, salt)
@@ -219,11 +233,11 @@ describe("Advanced NFT", function () {
     });
 
     it("reverts if could not prove due to ticket number for another address", async function () {
-      const { token, merkleTree, leafNodes, firstAccount, secondAccount } = await loadFixture(deployToken);
+      const { token, merkleTree, leafNodes, secondAccount } = await loadFixture(deployToken);
 
       const proofs = merkleTree.getHexProof(leafNodes[0]);
       const tokenId = 123;
-      const salt = await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      const salt = await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
 
       // NOTE: secondAccount should have a ticket number of 1, 3 is invalid
       await expect(
@@ -232,11 +246,11 @@ describe("Advanced NFT", function () {
     });
 
     it("reverts if could not prove due to one proof being incorrect", async function () {
-      const { token, merkleTree, leafNodes, firstAccount, secondAccount } = await loadFixture(deployToken);
+      const { token, merkleTree, leafNodes, secondAccount } = await loadFixture(deployToken);
 
       const proofs = merkleTree.getHexProof(leafNodes[0]);
       const tokenId = 123;
-      const salt = await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      const salt = await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
 
       const fakeProofNode = `0x999${proofs[1].substring(5)}`;
 
@@ -248,7 +262,7 @@ describe("Advanced NFT", function () {
     });
 
     it("reverts if trying to mint during presale when id secret was not commited", async function () {
-      const { token, merkleTree, leafNodes, firstAccount, secondAccount } = await loadFixture(deployToken);
+      const { token, merkleTree, leafNodes, secondAccount } = await loadFixture(deployToken);
 
       await (await token.activatePresale()).wait();
 
@@ -263,11 +277,11 @@ describe("Advanced NFT", function () {
     });
 
     it("reverts if trying to mint during presale when incorrect salt provided", async function () {
-      const { token, merkleTree, leafNodes, firstAccount, secondAccount } = await loadFixture(deployToken);
+      const { token, merkleTree, leafNodes, secondAccount } = await loadFixture(deployToken);
 
       const proofs = merkleTree.getHexProof(leafNodes[0]);
       const tokenId = 123;
-      await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
       const salt = Buffer.from(utils.randomBytes(32));
 
       // NOTE: secondAccount has a ticket number of 1
@@ -277,18 +291,18 @@ describe("Advanced NFT", function () {
     });
 
     it("reverts if trying to re-use ticket number and proofs", async function() {
-      const { token, merkleTree, leafNodes, firstAccount, secondAccount } = await loadFixture(deployToken);
+      const { token, merkleTree, leafNodes, secondAccount } = await loadFixture(deployToken);
 
       const proofs = merkleTree.getHexProof(leafNodes[0]);
       let tokenId = 123;
-      let salt = await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      let salt = await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
 
       await expect(
         token.connect(secondAccount).presaleMint(1, proofs, tokenId, salt)
       ).to.emit(token, 'Transfer').withArgs(
         ethers.constants.AddressZero,
         secondAccount.address,
-        123
+        tokenId
       );
 
       tokenId = 124;
@@ -300,19 +314,142 @@ describe("Advanced NFT", function () {
     });
 
     it("mints a token for an address during presale", async function() {
-      const { token, merkleTree, leafNodes, firstAccount, secondAccount } = await loadFixture(deployToken);
+      const { token, merkleTree, leafNodes,  secondAccount } = await loadFixture(deployToken);
 
       const proofs = merkleTree.getHexProof(leafNodes[0]);
       const tokenId = 123;
-      const salt = await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      const salt = await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
 
       await expect(
         token.connect(secondAccount).presaleMint(1, proofs, tokenId, salt)
       ).to.emit(token, 'Transfer').withArgs(
         ethers.constants.AddressZero,
         secondAccount.address,
+        tokenId
+      );
+    });
+  });
+
+  describe("Public minting", function () {
+    it("returns mint price", async function() {
+      const { token } = await loadFixture(deployToken);
+
+      expect(await token.MINT_PRICE()).to.eq(utils.parseEther('1'));
+    });
+
+    it("mints a token during public sale", async function() {
+      const { token, secondAccount } = await loadFixture(deployToken);
+
+      const tokenId = 123;
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      const MINT_PRICE = utils.parseEther('1');
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
+      ).to.emit(token, 'Transfer').withArgs(
+        ethers.constants.AddressZero,
+        secondAccount.address,
         123
       );
+    });
+
+    it("reverts if trying to public mint when public mint not active", async function() {
+      const { token, secondAccount } = await loadFixture(deployToken);
+
+      const tokenId = 123;
+      const salt = Buffer.from(utils.randomBytes(32));
+
+      const MINT_PRICE = utils.parseEther('1');
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
+      ).to.be.revertedWithCustomError(token, "FunctionInvalidAtThisStage");
+    });
+
+    it("reverts if trying to public mint without sending mint price", async function() {
+      const { token, secondAccount } = await loadFixture(deployToken);
+
+      const tokenId = 123;
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId, salt)
+      ).to.be.revertedWithCustomError(token, "ValueMustBeMintPrice");
+    });
+
+    it("reverts when trying to mint and max capacity reached", async function() {
+      const {
+        secondAccount,
+        thirdAccount,
+        fourthAccount,
+        fifthAccount
+      } = await loadFixture(deployToken);
+
+      const TokenFactory = await getTokenFactory();
+
+      const whitelistedAddresses = [
+        secondAccount.address,
+        thirdAccount.address,
+        fourthAccount.address,
+        fifthAccount.address
+      ];
+
+      const TICKETS_COUNT = whitelistedAddresses.length;
+      const MAX_SUPPLY = 1;
+      const MINT_PRICE = utils.parseEther('1');
+
+      const { merkleTree } = buildMerkleWhitelist(whitelistedAddresses);
+
+      const token = await TokenFactory.deploy(
+        merkleTree.getRoot(),
+        1,
+        TICKETS_COUNT
+      );
+
+      const tokenId1 = 123;
+      const salt1 = await prepareForPublicMinting(token, secondAccount, tokenId1, { mineBlocks: 9 });
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId1, salt1, { value: MINT_PRICE })
+      ).to.emit(token, 'Transfer').withArgs(
+        ethers.constants.AddressZero,
+        secondAccount.address,
+        tokenId1
+      );
+
+      const tokenId2 = 124;
+      const salt2 = await commitTokenIdAndMineBlocks(token, secondAccount, tokenId2, { mineBlocks: 9 });
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId2, salt2, { value: MINT_PRICE })
+      ).to.be.revertedWith("ERC721Capped: cap exceeded");
+    });
+  });
+
+  describe("Contributors", function () {
+    it("reverts when adding null address as contributor", async function() {
+      const { token, owner } = await loadFixture(deployToken);
+
+      await expect(
+        token.connect(owner).addContributor(ethers.constants.AddressZero)
+      ).to.be.revertedWithCustomError(token, "InvalidContributorAddress");
+    });
+
+    it("adds a contributor", async function() {
+      const { token, developer1, owner } = await loadFixture(deployToken);
+
+      await expect(
+        token.connect(owner).addContributor(developer1.address)
+      ).to.emit(token, 'ContributorAdded').withArgs(developer1.address);
+    });
+  });
+
+  describe("Withdrawals", function () {
+    it("allows a contributor to withdraw all contract balance", async function() {
+    });
+
+    it("does not allow a non-contributor to withdraw", async function() {
     });
   });
 });

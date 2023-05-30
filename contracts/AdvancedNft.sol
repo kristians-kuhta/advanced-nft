@@ -27,9 +27,9 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     bool revealed;
   }
 
-
   event StageTransition(uint256 indexed from, uint256 indexed to);
-  event TokenIdCommitted(address sender, bytes32 dataHash, uint64 blockNumber);
+  event TokenIdCommitted(address indexed sender, bytes32 indexed dataHash, uint64 indexed blockNumber);
+  event ContributorAdded(address indexed contributor);
 
   error FunctionInvalidAtThisStage();
   error IdAndSaltDoesNotMatchCommitted();
@@ -39,17 +39,19 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   error ProofNotProvided();
   error InvalidProof();
   error TicketAlreadyUsed();
+  error InvalidContributorAddress();
+  error OnlyAllowedForContributors();
+  error ValueMustBeMintPrice();
 
   Stages public stage;
 
   bytes32 public immutable merkleRoot;
   uint256 public constant MINT_PRICE = 1 * 10**18;
-  address private immutable developer1;
-  address private immutable developer2;
 
   uint256 public CAN_REVEAL_AFTER_BLOCKS = 10;
 
   mapping(address commiter => TokenIdCommit commit) private tokenIdCommits;
+  mapping(address contributor => bool active) private contributors;
 
   using BitMaps for BitMaps.BitMap;
   BitMaps.BitMap private unusedTickets;
@@ -57,8 +59,6 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   constructor(
     bytes32 merkleRoot_,
     uint256 cap_,
-    address developer1_,
-    address developer2_,
     uint256 ticketsCount
   ) {
     require(merkleRoot_ != 0);
@@ -68,9 +68,6 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
     stage = Stages.Inactive;
     merkleRoot = merkleRoot_;
-
-    developer1 = developer1_;
-    developer2 = developer2_;
 
     for(uint256 i; i < ticketsCount; i++) {
       unusedTickets.set(i);
@@ -86,11 +83,6 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   }
 
   // Internal validation functions
-  function _requireDeveloper(address receiver_) internal view {
-    if (receiver_ != developer1 && receiver_ != developer2) {
-      revert('Not a developer');
-    }
-  }
 
   function _requireIdCommittedAndNotRevealed(TokenIdCommit storage _idCommit) internal view {
     if(_idCommit.commit == "" || _idCommit.revealed) {
@@ -142,6 +134,31 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     }
   }
 
+  function _requireContributorAddress(address _contributor) internal view {
+    if (_contributor == address(0)) {
+      revert InvalidContributorAddress();
+    }
+  }
+
+  function _requireContributor() internal view {
+    if (!contributors[msg.sender]) {
+      revert OnlyAllowedForContributors();
+    }
+  }
+
+  function _requireMintPriceSent() internal view {
+    if (msg.value != MINT_PRICE) {
+      revert ValueMustBeMintPrice();
+    }
+  }
+
+  function _runTokenIdValidations(TokenIdCommit storage idCommit, uint256 _tokenId, bytes32 _salt) internal view {
+    // Validation: Token ID related
+    _requireIdCommittedAndNotRevealed(idCommit);
+    _requireIdCommitBlocksPassed(idCommit);
+    _requireTokenIdMatchesCommitted(idCommit, _tokenId, _salt);
+  }
+
   // Internal utility view functions
 
   function _hashedIdAndSalt(uint256 _tokenId, bytes32 _salt) internal view returns (bytes32) {
@@ -151,7 +168,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   // Internal function overrides
 
   function _mint(address _to, uint256 _tokenId) internal virtual override {
-    require(_tokenCounter.current() < _cap, "ERC721Capped: cap exceeded");
+    require(_tokenCounter.current() <= _cap, "ERC721Capped: cap exceeded");
     super._mint(_to, _tokenId);
   }
 
@@ -163,16 +180,22 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
   // Public state changing functions
 
-  function activatePresale() public onlyOwner atStage(Stages.Inactive) {
+  function activatePresale() external onlyOwner atStage(Stages.Inactive) {
     stage = Stages.PreSale;
 
     emit StageTransition(uint256(Stages.Inactive), uint256(Stages.PreSale));
   }
 
-  function activatePublicSale() public onlyOwner atStage(Stages.PreSale) {
+  function activatePublicSale() external onlyOwner atStage(Stages.PreSale) {
     stage = Stages.PublicSale;
 
     emit StageTransition(uint256(Stages.PreSale), uint256(Stages.PublicSale));
+  }
+
+  function addContributor(address _contributor) external onlyOwner {
+    _requireContributorAddress(_contributor);
+    contributors[_contributor] = true;
+    emit ContributorAdded(_contributor);
   }
 
   // @dev Commit token ID for the first time or replace previously committed one
@@ -197,12 +220,9 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     _requireTicket(_ticket);
     _requireProof(_proof);
 
-    // Validation: Token ID related
     TokenIdCommit storage idCommit = tokenIdCommits[msg.sender];
 
-    _requireIdCommittedAndNotRevealed(idCommit);
-    _requireIdCommitBlocksPassed(idCommit);
-    _requireTokenIdMatchesCommitted(idCommit, _tokenId, _salt);
+    _runTokenIdValidations(idCommit, _tokenId, _salt);
 
     _requireValidProof(_ticket, _proof);
     _requireUnusedTicket(_ticket);
@@ -215,10 +235,15 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     _safeMint(msg.sender, _tokenId);
   }
 
-  function publicMint() public payable atStage(Stages.PublicSale) {
-    require(msg.value == MINT_PRICE, "Must send mint price");
+  // TODO: use commit-reveal IDs here as well
+  function publicMint(uint256 _tokenId, bytes32 _salt) public payable atStage(Stages.PublicSale) {
+    _requireMintPriceSent();
 
-    uint256 _tokenId = _tokenCounter.current();
+    TokenIdCommit storage idCommit = tokenIdCommits[msg.sender];
+
+    _runTokenIdValidations(idCommit, _tokenId, _salt);
+
+    idCommit.revealed = true;
 
     _tokenCounter.increment();
 
@@ -226,13 +251,13 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   }
 
 
-  function withdraw(address developer_, uint256 amount_) public {
+  function withdraw(uint256 amount_) public {
     require(amount_ < 0, "Must provide amount");
     require(amount_ < address(this).balance, "Insufficient balance");
 
-    _requireDeveloper(developer_);
+    _requireContributor();
 
-    (bool success,) = payable(developer_).call{value: amount_}("");
+    (bool success,) = payable(msg.sender).call{ value: amount_ }("");
     require(success, "Eth transfer failed");
   }
 }
