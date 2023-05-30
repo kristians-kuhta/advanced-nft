@@ -71,30 +71,13 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     _;
   }
 
+  // Internal validation functions
   function _requireDeveloper(address receiver_) internal view {
     if (receiver_ != developer1 && receiver_ != developer2) {
       revert('Not a developer');
     }
   }
 
-  function activatePresale() public onlyOwner atStage(Stages.Inactive) {
-    stage = Stages.PreSale;
-
-    emit StageTransition(uint256(Stages.Inactive), uint256(Stages.PreSale));
-  }
-
-  function activatePublicSale() public onlyOwner atStage(Stages.PreSale) {
-    stage = Stages.PublicSale;
-
-    emit StageTransition(uint256(Stages.PreSale), uint256(Stages.PublicSale));
-  }
-
-  function _mint(address _to, uint256 _tokenId) internal virtual override {
-    require(_tokenCounter.current() < _cap, "ERC721Capped: cap exceeded");
-    super._mint(_to, _tokenId);
-  }
-
-  // TODO: reorder the internal/external functions?
   function _requireIdCommittedAndNotRevealed(TokenIdCommit storage _idCommit) internal view {
     if(_idCommit.commit == "" || _idCommit.revealed) {
       revert MustCommitIdBefore();
@@ -119,23 +102,6 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     }
   }
 
-  function _hashedIdAndSalt(uint256 _tokenId, bytes32 _salt) internal view returns (bytes32) {
-    return keccak256(abi.encodePacked(address(this), _tokenId, _salt));
-  }
-
-  // @dev Commit token ID for the first time or replace previously committed one
-  function commitTokenId(bytes32 commitHash) external {
-    TokenIdCommit storage idCommit = tokenIdCommits[msg.sender];
-
-    uint64 blockNumber = uint64(block.number);
-
-    idCommit.revealed = false;
-    idCommit.blockNumber = blockNumber;
-    idCommit.commit = commitHash;
-
-    emit TokenIdCommitted(msg.sender, commitHash, blockNumber);
-  }
-
   function _requireTicket(uint256 _ticket) internal pure {
     if (_ticket == 0) {
       revert TicketNotProvided();
@@ -158,6 +124,52 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
   function _requireUnusedTicket(uint256 _ticket) internal view {
     // TODO: add ticket checking logic here
+  }
+
+  // Internal utility view functions
+
+  function _hashedIdAndSalt(uint256 _tokenId, bytes32 _salt) internal view returns (bytes32) {
+    return keccak256(abi.encodePacked(address(this), _tokenId, _salt));
+  }
+
+  // Internal function overrides
+
+  function _mint(address _to, uint256 _tokenId) internal virtual override {
+    require(_tokenCounter.current() < _cap, "ERC721Capped: cap exceeded");
+    super._mint(_to, _tokenId);
+  }
+
+  // Public view functions
+
+  function merkleLeaf(uint256 _ticket) public view returns(bytes32) {
+    return keccak256(abi.encode(msg.sender, _ticket));
+  }
+
+  // Public state changing functions
+
+  function activatePresale() public onlyOwner atStage(Stages.Inactive) {
+    stage = Stages.PreSale;
+
+    emit StageTransition(uint256(Stages.Inactive), uint256(Stages.PreSale));
+  }
+
+  function activatePublicSale() public onlyOwner atStage(Stages.PreSale) {
+    stage = Stages.PublicSale;
+
+    emit StageTransition(uint256(Stages.PreSale), uint256(Stages.PublicSale));
+  }
+
+  // @dev Commit token ID for the first time or replace previously committed one
+  function commitTokenId(bytes32 commitHash) external {
+    TokenIdCommit storage idCommit = tokenIdCommits[msg.sender];
+
+    uint64 blockNumber = uint64(block.number);
+
+    idCommit.revealed = false;
+    idCommit.blockNumber = blockNumber;
+    idCommit.commit = commitHash;
+
+    emit TokenIdCommitted(msg.sender, commitHash, blockNumber);
   }
 
   function presaleMint(
@@ -197,9 +209,6 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     _safeMint(msg.sender, _tokenId);
   }
 
-  function merkleLeaf(uint256 _ticket) public view returns(bytes32) {
-    return keccak256(abi.encode(msg.sender, _ticket));
-  }
 
   function withdraw(address developer_, uint256 amount_) public {
     require(amount_ < 0, "Must provide amount");
