@@ -70,19 +70,24 @@ describe("Advanced NFT", function () {
     ] = await ethers.getSigners();
 
     const TokenFactory = await getTokenFactory();
-    const { merkleTree, leafNodes } = buildMerkleWhitelist([
+
+    const whitelistedAddresses = [
       secondAccount.address,
       thirdAccount.address,
       fourthAccount.address,
       fifthAccount.address
-    ]);
+    ];
+    const TICKETS_COUNT = whitelistedAddresses.length;
+
+    const { merkleTree, leafNodes } = buildMerkleWhitelist(whitelistedAddresses);
 
     // Max supply: 6 available, 4 whitelist spots
     const token = await TokenFactory.deploy(
       merkleTree.getRoot(),
       6,
       developer1.address,
-      developer2.address
+      developer2.address,
+      TICKETS_COUNT
     );
 
     return {
@@ -272,6 +277,26 @@ describe("Advanced NFT", function () {
     });
 
     it("reverts if trying to re-use ticket number and proofs", async function() {
+      const { token, merkleTree, leafNodes, firstAccount, secondAccount } = await loadFixture(deployToken);
+
+      const proofs = merkleTree.getHexProof(leafNodes[0]);
+      let tokenId = 123;
+      let salt = await prepareForMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      await expect(
+        token.connect(secondAccount).presaleMint(1, proofs, tokenId, salt)
+      ).to.emit(token, 'Transfer').withArgs(
+        ethers.constants.AddressZero,
+        secondAccount.address,
+        123
+      );
+
+      tokenId = 124;
+      salt = await commitTokenIdAndMineBlocks(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      await expect(
+        token.connect(secondAccount).presaleMint(1, proofs, tokenId, salt)
+      ).to.be.revertedWithCustomError(token, 'TicketAlreadyUsed');
     });
 
     it("mints a token for an address during presale", async function() {

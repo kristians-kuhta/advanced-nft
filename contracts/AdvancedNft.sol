@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/utils/structs/BitMaps.sol";
 
 contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   uint256 private immutable _cap;
@@ -37,6 +38,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   error TicketNotProvided();
   error ProofNotProvided();
   error InvalidProof();
+  error TicketAlreadyUsed();
 
   Stages public stage;
 
@@ -49,7 +51,16 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
   mapping(address commiter => TokenIdCommit commit) private tokenIdCommits;
 
-  constructor(bytes32 merkleRoot_, uint256 cap_, address developer1_, address developer2_) {
+  using BitMaps for BitMaps.BitMap;
+  BitMaps.BitMap private unusedTickets;
+
+  constructor(
+    bytes32 merkleRoot_,
+    uint256 cap_,
+    address developer1_,
+    address developer2_,
+    uint256 ticketsCount
+  ) {
     require(merkleRoot_ != 0);
     require(cap_ > 0, "ERC721Capped: cap is 0");
 
@@ -60,6 +71,10 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
     developer1 = developer1_;
     developer2 = developer2_;
+
+    for(uint256 i; i < ticketsCount; i++) {
+      unusedTickets.set(i);
+    }
   }
 
   modifier atStage(Stages stage_) {
@@ -122,7 +137,9 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   }
 
   function _requireUnusedTicket(uint256 _ticket) internal view {
-    // TODO: add ticket checking logic here
+    if (!unusedTickets.get(_ticket)) {
+      revert TicketAlreadyUsed();
+    }
   }
 
   // Internal utility view functions
@@ -189,9 +206,9 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
     _requireValidProof(_ticket, _proof);
     _requireUnusedTicket(_ticket);
-    // TODO: use bitmaps for registering used presale tickets
 
     idCommit.revealed = true;
+    unusedTickets.unset(_ticket);
 
     _tokenCounter.increment();
 
