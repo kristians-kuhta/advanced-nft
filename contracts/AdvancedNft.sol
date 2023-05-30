@@ -6,7 +6,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-import "hardhat/console.sol";
 
 contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   uint256 private immutable _cap;
