@@ -72,6 +72,18 @@ describe("Advanced NFT", function () {
     return await commitTokenIdAndMineBlocks(token, minter, tokenId, options);
   }
 
+  async function mintToken(token, tokenId, account, salt) {
+    const MINT_PRICE = utils.parseEther('1');
+
+    await expect(
+      token.connect(account).publicMint(tokenId, salt, { value: MINT_PRICE })
+    ).to.emit(token, 'Transfer').withArgs(
+      ethers.constants.AddressZero,
+      account.address,
+      tokenId
+    );
+  }
+
   async function deployToken() {
     const [
       owner,
@@ -236,7 +248,7 @@ describe("Advanced NFT", function () {
       const { token, merkleTree, leafNodes, secondAccount } = await loadFixture(deployToken);
 
       const proofs = merkleTree.getHexProof(leafNodes[0]);
-      const tokenId = 123;
+  const tokenId = 123;
       const salt = await prepareForPresaleMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
 
       // NOTE: secondAccount should have a ticket number of 1, 3 is invalid
@@ -449,19 +461,10 @@ describe("Advanced NFT", function () {
     it("allows a contributor to withdraw part of contract's balance", async function() {
       const { token, secondAccount, developer1 } = await loadFixture(deployToken);
 
-      // TODO: reuse the mint thing and extract to into a function
       const tokenId = 123;
       const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      await mintToken(token, tokenId, secondAccount, salt);
 
-      const MINT_PRICE = utils.parseEther('1');
-
-      await expect(
-        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
-      ).to.emit(token, 'Transfer').withArgs(
-        ethers.constants.AddressZero,
-        secondAccount.address,
-        123
-      );
       await (await token.addContributor(developer1.address)).wait();
 
       const tokenBalanceBefore = await ethers.provider.getBalance(token.address);
@@ -485,70 +488,127 @@ describe("Advanced NFT", function () {
     it("reverts when a non-contributor withdraws", async function() {
       const { token, secondAccount } = await loadFixture(deployToken);
 
-      // TODO: reuse the mint thing and extract to into a function
       const tokenId = 123;
       const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
-
-      const MINT_PRICE = utils.parseEther('1');
-
-      await expect(
-        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
-      ).to.emit(token, 'Transfer').withArgs(
-        ethers.constants.AddressZero,
-        secondAccount.address,
-        123
-      );
-      // End of minting
+      await mintToken(token, tokenId, secondAccount, salt);
 
       await expect(
-        token.withdraw(123)
+        token.withdraw(1010)
       ).to.be.revertedWithCustomError(token, "OnlyAllowedForContributors");
     });
 
     it("reverts when trying to withdraw more than contract balance", async function() {
       const { token, secondAccount } = await loadFixture(deployToken);
 
-      // TODO: reuse the mint thing and extract to into a function
       const tokenId = 123;
       const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      await mintToken(token, tokenId, secondAccount, salt);
 
-      const MINT_PRICE = utils.parseEther('1');
-
+      // NOTE: mint price is 1 eth
       await expect(
-        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
-      ).to.emit(token, 'Transfer').withArgs(
-        ethers.constants.AddressZero,
-        secondAccount.address,
-        123
-      );
-      // End of minting
-
-      await expect(
-        token.withdraw(MINT_PRICE.add(1))
+        token.withdraw(utils.parseEther('1.01'))
       ).to.be.revertedWith("Insufficient balance");
     });
 
     it("reverts when trying to withdraw zero ether", async function() {
       const { token, secondAccount } = await loadFixture(deployToken);
 
-      // TODO: reuse the mint thing and extract to into a function
       const tokenId = 123;
+
       const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
-
-      const MINT_PRICE = utils.parseEther('1');
-
-      await expect(
-        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
-      ).to.emit(token, 'Transfer').withArgs(
-        ethers.constants.AddressZero,
-        secondAccount.address,
-        123
-      );
-      // End of minting
+      await mintToken(token, tokenId, secondAccount, salt);
 
       await expect(
         token.withdraw(0)
       ).to.be.revertedWith("Must provide amount");
+    });
+  });
+
+  describe("Multicall transfers", function () {
+    it("transfers multiple tokens via multicall", async function() {
+      const { token, secondAccount, thirdAccount } = await loadFixture(deployToken);
+
+      const tokenId1 = 123;
+      const tokenId2= 124;
+
+      const salt1 = await prepareForPublicMinting(token, secondAccount, tokenId1, { mineBlocks: 9 });
+      await mintToken(token, tokenId1, secondAccount, salt1);
+
+      const salt2 = await commitTokenIdAndMineBlocks(token, secondAccount, tokenId2, { mineBlocks: 9 });
+      await mintToken(token, tokenId2, secondAccount, salt2);
+
+      const calls = [
+        token.interface.encodeFunctionData(
+          "transferFrom",
+          [secondAccount.address, thirdAccount.address, tokenId1]
+        ),
+        token.interface.encodeFunctionData(
+          "transferFrom",
+          [secondAccount.address, thirdAccount.address, tokenId2]
+        )
+      ];
+
+      await expect(
+        token.connect(secondAccount).multicall(calls)
+      ).to.emit(token, 'Transfer').withArgs(
+        secondAccount.address,
+        thirdAccount.address,
+        tokenId1
+      ).and.to.emit(token, 'Transfer').withArgs(
+        secondAccount.address,
+        thirdAccount.address,
+        tokenId2
+      );
+    });
+
+    it("reverts when no calls provided", async function() {
+      const { token } = await loadFixture(deployToken);
+
+      const calls = [];
+
+      await expect(
+        token.multicall(calls)
+      ).to.be.revertedWith("Calls not provided");
+    });
+
+    it("does not delegate call when first call is for a function other than transferFrom function", async function() {
+      const { token, secondAccount, thirdAccount } = await loadFixture(deployToken);
+
+      const tokenId = 123;
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      await mintToken(token, tokenId, secondAccount, salt);
+
+      const commitHash = Buffer.from(utils.randomBytes(32));
+
+      const calls = [
+        token.interface.encodeFunctionData("commitTokenId", [commitHash]),
+        token.interface.encodeFunctionData("transferFrom", [secondAccount.address, thirdAccount.address, tokenId])
+      ];
+
+      await expect(
+        token.connect(secondAccount).multicall(calls)
+      ).to.be.revertedWithCustomError(token, "MulticallSupportsOnlyTransferFrom");
+    });
+
+    it("does not delegate call when second call is for a function other than transferFrom function", async function() {
+      const { token, secondAccount, thirdAccount } = await loadFixture(deployToken);
+
+      const tokenId = 123;
+
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+      await mintToken(token, tokenId, secondAccount, salt);
+
+      const commitHash = Buffer.from(utils.randomBytes(32));
+
+      const calls = [
+        token.interface.encodeFunctionData("transferFrom", [secondAccount.address, thirdAccount.address, tokenId]),
+        token.interface.encodeFunctionData("commitTokenId", [commitHash])
+      ]
+
+      await expect(
+        token.connect(secondAccount).multicall(calls)
+      ).to.be.revertedWithCustomError(token, "MulticallSupportsOnlyTransferFrom");
+
     });
   });
 });

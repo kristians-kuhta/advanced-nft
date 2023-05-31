@@ -42,6 +42,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   error InvalidContributorAddress();
   error OnlyAllowedForContributors();
   error ValueMustBeMintPrice();
+  error MulticallSupportsOnlyTransferFrom();
 
   Stages public stage;
 
@@ -134,7 +135,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     }
   }
 
-  function _requireContributorAddress(address _contributor) internal view {
+  function _requireContributorAddress(address _contributor) internal pure {
     if (_contributor == address(0)) {
       revert InvalidContributorAddress();
     }
@@ -235,7 +236,6 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     _safeMint(msg.sender, _tokenId);
   }
 
-  // TODO: use commit-reveal IDs here as well
   function publicMint(uint256 _tokenId, bytes32 _salt) public payable atStage(Stages.PublicSale) {
     _requireMintPriceSent();
 
@@ -248,6 +248,30 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     _tokenCounter.increment();
 
     _safeMint(msg.sender, _tokenId);
+  }
+
+  // @dev This multicall implementation is intended only for `transferFrom` function
+  function multicall(bytes[] calldata data) external returns (bytes[] memory results) {
+    require(data.length > 0, "Calls not provided");
+
+    results = new bytes[](data.length);
+
+    for (uint256 i = 0; i < data.length; i++) {
+      bytes4 selector = bytes4(data[i][:4]);
+
+      if (selector != this.transferFrom.selector) {
+        revert MulticallSupportsOnlyTransferFrom();
+      }
+
+      // Question: Is it a decent practice to perform gas consuming tasks if invalid input is given?
+      //           E.g. this function is intended for transferFrom calls only. If someone calls it
+      //           for one transferFrom function followed by other function calls, should we allow
+      //           gas spending on the first call? Could be a mistake, could be done by someone with
+      //           malicious intentions.
+      results[i] = Address.functionDelegateCall(address(this), data[i]);
+    }
+
+    return results;
   }
 
 
