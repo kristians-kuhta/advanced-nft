@@ -446,10 +446,109 @@ describe("Advanced NFT", function () {
   });
 
   describe("Withdrawals", function () {
-    it("allows a contributor to withdraw all contract balance", async function() {
+    it("allows a contributor to withdraw part of contract's balance", async function() {
+      const { token, secondAccount, developer1 } = await loadFixture(deployToken);
+
+      // TODO: reuse the mint thing and extract to into a function
+      const tokenId = 123;
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      const MINT_PRICE = utils.parseEther('1');
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
+      ).to.emit(token, 'Transfer').withArgs(
+        ethers.constants.AddressZero,
+        secondAccount.address,
+        123
+      );
+      await (await token.addContributor(developer1.address)).wait();
+
+      const tokenBalanceBefore = await ethers.provider.getBalance(token.address);
+      const developer1BalanceBefore = await ethers.provider.getBalance(developer1.address);
+
+      const WITHDRAW_AMOUNT = utils.parseEther('0.5');
+
+      const withdrawResponse = await token.connect(developer1).withdraw(WITHDRAW_AMOUNT);
+      const withdrawReceipt = await withdrawResponse.wait();
+
+      const { gasUsed, effectiveGasPrice } = withdrawReceipt;
+      const txFee = gasUsed.mul(effectiveGasPrice);
+
+      const tokenBalanceAfter = await ethers.provider.getBalance(token.address);
+      const developer1BalanceAfter = await ethers.provider.getBalance(developer1.address);
+
+      expect(tokenBalanceAfter).to.eq(tokenBalanceBefore.sub(WITHDRAW_AMOUNT));
+      expect(developer1BalanceAfter).to.eq(developer1BalanceBefore.add(WITHDRAW_AMOUNT.sub(txFee)));
     });
 
-    it("does not allow a non-contributor to withdraw", async function() {
+    it("reverts when a non-contributor withdraws", async function() {
+      const { token, secondAccount } = await loadFixture(deployToken);
+
+      // TODO: reuse the mint thing and extract to into a function
+      const tokenId = 123;
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      const MINT_PRICE = utils.parseEther('1');
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
+      ).to.emit(token, 'Transfer').withArgs(
+        ethers.constants.AddressZero,
+        secondAccount.address,
+        123
+      );
+      // End of minting
+
+      await expect(
+        token.withdraw(123)
+      ).to.be.revertedWithCustomError(token, "OnlyAllowedForContributors");
+    });
+
+    it("reverts when trying to withdraw more than contract balance", async function() {
+      const { token, secondAccount } = await loadFixture(deployToken);
+
+      // TODO: reuse the mint thing and extract to into a function
+      const tokenId = 123;
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      const MINT_PRICE = utils.parseEther('1');
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
+      ).to.emit(token, 'Transfer').withArgs(
+        ethers.constants.AddressZero,
+        secondAccount.address,
+        123
+      );
+      // End of minting
+
+      await expect(
+        token.withdraw(MINT_PRICE.add(1))
+      ).to.be.revertedWith("Insufficient balance");
+    });
+
+    it("reverts when trying to withdraw zero ether", async function() {
+      const { token, secondAccount } = await loadFixture(deployToken);
+
+      // TODO: reuse the mint thing and extract to into a function
+      const tokenId = 123;
+      const salt = await prepareForPublicMinting(token, secondAccount, tokenId, { mineBlocks: 9 });
+
+      const MINT_PRICE = utils.parseEther('1');
+
+      await expect(
+        token.connect(secondAccount).publicMint(tokenId, salt, { value: MINT_PRICE })
+      ).to.emit(token, 'Transfer').withArgs(
+        ethers.constants.AddressZero,
+        secondAccount.address,
+        123
+      );
+      // End of minting
+
+      await expect(
+        token.withdraw(0)
+      ).to.be.revertedWith("Must provide amount");
     });
   });
 });

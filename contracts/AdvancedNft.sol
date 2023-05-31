@@ -252,7 +252,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
 
   function withdraw(uint256 amount_) public {
-    require(amount_ < 0, "Must provide amount");
+    require(amount_ > 0, "Must provide amount");
     require(amount_ < address(this).balance, "Insufficient balance");
 
     _requireContributor();
