@@ -43,6 +43,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   error OnlyAllowedForContributors();
   error ValueMustBeMintPrice();
   error MulticallSupportsOnlyTransferFrom();
+  error CallsMustBePresent();
 
   Stages public stage;
 
@@ -153,6 +154,34 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     }
   }
 
+  function _requireValidCalls(bytes[] calldata calls) internal view {
+    _requireCallsPresent(calls);
+    //_requireAllCallsAreTransferFromCalls(calls);
+  }
+
+  function _requireCallsPresent(bytes[] calldata calls) internal view {
+    if (calls.length == 0) {
+      revert CallsMustBePresent();
+    }
+  }
+
+  // function _requireAllCallsAreTransferFromCalls(bytes[] calls) internal view {
+  //   bool allCallsAreTransferFromCalls = false;
+
+  //   // bytes memory data = msg.data;
+  //   bytes memory callsData = msg.data[5:];
+  //   uint256 numOfCalls =
+
+
+
+  //     if (allCallsAreTransferFromCalls) {
+  //       revert MulticallSupportsOnlyTransferFrom();
+  //     }
+
+  //   if (
+
+  // }
+
   function _runTokenIdValidations(TokenIdCommit storage idCommit, uint256 _tokenId, bytes32 _salt) internal view {
     // Validation: Token ID related
     _requireIdCommittedAndNotRevealed(idCommit);
@@ -163,7 +192,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   // Internal utility view functions
 
   function _hashedIdAndSalt(uint256 _tokenId, bytes32 _salt) internal view returns (bytes32) {
-    return keccak256(abi.encodePacked(address(this), _tokenId, _salt));
+    return keccak256(abi.encodePacked(address(this), msg.sender, _tokenId, _salt));
   }
 
   // Internal function overrides
@@ -251,24 +280,13 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
   }
 
   // @dev This multicall implementation is intended only for `transferFrom` function
-  function multicall(bytes[] calldata data) external returns (bytes[] memory results) {
-    require(data.length > 0, "Calls not provided");
+  function multicall(bytes[] calldata calls) external returns (bytes[] memory results) {
+    _requireValidCalls(calls);
 
-    results = new bytes[](data.length);
+    results = new bytes[](calls.length);
 
-    for (uint256 i = 0; i < data.length; i++) {
-      bytes4 selector = bytes4(data[i][:4]);
-
-      if (selector != this.transferFrom.selector) {
-        revert MulticallSupportsOnlyTransferFrom();
-      }
-
-      // Question: Is it a decent practice to perform gas consuming tasks if invalid input is given?
-      //           E.g. this function is intended for transferFrom calls only. If someone calls it
-      //           for one transferFrom function followed by other function calls, should we allow
-      //           gas spending on the first call? Could be a mistake, could be done by someone with
-      //           malicious intentions.
-      results[i] = Address.functionDelegateCall(address(this), data[i]);
+    for (uint256 i = 0; i < calls.length; i++) {
+      results[i] = Address.functionDelegateCall(address(this), calls[i]);
     }
 
     return results;
