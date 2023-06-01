@@ -32,7 +32,9 @@ describe("Advanced NFT", function () {
     const tokenIdHex = utils.hexZeroPad(tokenId, 32).toLowerCase();
     const salt = Buffer.from(utils.randomBytes(32));
 
-    const commitDataBeforeHashing = Buffer.from(utils.concat([token.address, tokenIdHex, salt]));
+    const commitDataBeforeHashing = Buffer.from(
+      utils.concat([token.address, minter.address, tokenIdHex, salt])
+    );
     const hashedCommitData = utils.keccak256(commitDataBeforeHashing);
 
     const blockNumberBefore = await ethers.provider.getBlockNumber();
@@ -529,7 +531,8 @@ describe("Advanced NFT", function () {
       const { token, secondAccount, thirdAccount } = await loadFixture(deployToken);
 
       const tokenId1 = 123;
-      const tokenId2= 124;
+      const tokenId2 = 124;
+      const tokenId3 = 125;
 
       const salt1 = await prepareForPublicMinting(token, secondAccount, tokenId1, { mineBlocks: 9 });
       await mintToken(token, tokenId1, secondAccount, salt1);
@@ -537,20 +540,31 @@ describe("Advanced NFT", function () {
       const salt2 = await commitTokenIdAndMineBlocks(token, secondAccount, tokenId2, { mineBlocks: 9 });
       await mintToken(token, tokenId2, secondAccount, salt2);
 
-      const calls = [
-        token.interface.encodeFunctionData(
+      const salt3 = await commitTokenIdAndMineBlocks(token, secondAccount, tokenId3, { mineBlocks: 9 });
+      await mintToken(token, tokenId3, secondAccount, salt3);
+
+      const call1 = token.interface.encodeFunctionData(
           "transferFrom",
           [secondAccount.address, thirdAccount.address, tokenId1]
-        ),
-        token.interface.encodeFunctionData(
+      );
+
+      const call2 = token.interface.encodeFunctionData(
           "transferFrom",
           [secondAccount.address, thirdAccount.address, tokenId2]
-        )
-      ];
+      );
 
-      await expect(
-        token.connect(secondAccount).multicall(calls)
-      ).to.emit(token, 'Transfer').withArgs(
+      const call3 = token.interface.encodeFunctionData(
+          "transferFrom",
+          [secondAccount.address, thirdAccount.address, tokenId3]
+      );
+
+      const abiCoder = ethers.utils.defaultAbiCoder;
+
+      const calls = [call1, call2, call3];
+
+      const multicallResponse = await token.connect(secondAccount).multicall(calls);
+
+      await expect(multicallResponse).to.emit(token, 'Transfer').withArgs(
         secondAccount.address,
         thirdAccount.address,
         tokenId1
@@ -558,6 +572,10 @@ describe("Advanced NFT", function () {
         secondAccount.address,
         thirdAccount.address,
         tokenId2
+      ).and.to.emit(token, 'Transfer').withArgs(
+        secondAccount.address,
+        thirdAccount.address,
+        tokenId3
       );
     });
 
@@ -568,7 +586,7 @@ describe("Advanced NFT", function () {
 
       await expect(
         token.multicall(calls)
-      ).to.be.revertedWith("Calls not provided");
+      ).to.be.revertedWithCustomError(token, "CallsMustBePresent");
     });
 
     it("does not delegate call when first call is for a function other than transferFrom function", async function() {

@@ -156,7 +156,7 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
 
   function _requireValidCalls(bytes[] calldata calls) internal view {
     _requireCallsPresent(calls);
-    //_requireAllCallsAreTransferFromCalls(calls);
+    _requireAllCallsAreTransferFromCalls(calls);
   }
 
   function _requireCallsPresent(bytes[] calldata calls) internal view {
@@ -165,22 +165,17 @@ contract AdvancedNft is ERC721("Advanced NFT", "ADV"), Ownable {
     }
   }
 
-  // function _requireAllCallsAreTransferFromCalls(bytes[] calls) internal view {
-  //   bool allCallsAreTransferFromCalls = false;
+  function _requireAllCallsAreTransferFromCalls(bytes[] calldata calls) internal view {
+    // TODO: try to apply mask to msg.data to ensure the same thing as in this
+    //       for loop, but without iterating a lot of times.
+    for(uint256 i; i < calls.length; i++) {
+      bytes4 selector = bytes4(calls[i][:4]);
 
-  //   // bytes memory data = msg.data;
-  //   bytes memory callsData = msg.data[5:];
-  //   uint256 numOfCalls =
-
-
-
-  //     if (allCallsAreTransferFromCalls) {
-  //       revert MulticallSupportsOnlyTransferFrom();
-  //     }
-
-  //   if (
-
-  // }
+      if (selector != this.transferFrom.selector) {
+        revert MulticallSupportsOnlyTransferFrom();
+      }
+    }
+  }
 
   function _runTokenIdValidations(TokenIdCommit storage idCommit, uint256 _tokenId, bytes32 _salt) internal view {
     // Validation: Token ID related
